@@ -1,0 +1,178 @@
+/* True results simulation css */
+
+/* Limit width on big screens */
+body {
+	max-width: 1600px;
+	margin: auto;
+}
+
+/* Format input headings */
+h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #4a4949;
+}
+
+/* Panel title margin */
+h1 {
+	margin-top: 10px;
+}
+
+/* Full results table shrink row size */
+.gt_row {
+	padding-top:1px !important;
+	padding-bottom: 1px !important;
+}
+
+/* Full results shrink font size */
+.gt_table {
+	font-size: 13px !important;
+}
+
+/* Center and size the results title 
+.shiny-text-output {
+	margin:auto;
+	text-align: center;
+	font-size: 25px;
+	font-weight: 700;
+	width: 100%;
+}
+*/
+
+/* Set the main body/text font */
+p, a, body {
+    font-family: "Lato", helvetica,arial,sans-serf;
+    font-size: 1.1em;
+    margin: 5px 0 5px 0;
+}
+
+/* Button formats */
+.btn {
+	font-size: 12px;
+    padding: 6px;
+    background: #1967be;
+    color: white;
+    border-color: #868383;
+}
+
+
+/* Center top row blocks */
+#testTitle, #hypothesis, #imagesboth {
+	text-align: center;
+}
+
+/* test title/image container */
+.testmeta {
+	margin-left: auto;
+	margin-right: auto;
+	width: 100%;
+}
+
+/* Fix test title container height */
+.topRow {
+	height: auto !important;
+	flex-basis: auto !important;
+}
+
+/* Numerical inputs */
+.form-control {
+  font-size: 16px;
+  padding: 0 10px;
+  /*background-color: #bdd4f9;
+  border: none;*/
+  height: 30px;
+  width: 150px;
+}
+
+/* pdf button */
+#exportpdf {
+	margin: 15px;
+}
+
+/* Explantions above 1st row plots */
+#exp1, #exp2 {
+	height: 30% !important;
+}
+
+/* Plots in first row */
+#plot1, #plot2 {
+	height: 70% !important;
+}
+
+/* Explanation 2nd row */
+#exp4 {
+	height: 15% !important;
+}
+
+/* Plots in 2nd row */
+#valplot {
+	height: 85% !important;
+}
+
+/* Explanation 3rd row */
+#exp5, #exp6 {
+	height: 25% !important;
+}
+
+/* Plots in 3rd row */
+#winplot, #lossplot {
+	height: 75% !important;
+}
+
+/* top row cols */
+.threecol {
+	width: 33%;
+}
+
+/* emphasized text */
+strong {
+	color: #009CAB;
+	font-weight: 800;
+}
+
+/* summary highlights in top row */
+.highlights {
+	font-style: italic;
+	color: #464444;
+    font-size: 14px;
+    padding: 15px;
+}
+
+
+/* Set SDI logo size */
+.navbar-logo img {
+	max-width: 150px;
+	margin-top:13px;
+}
+
+
+/* LOTS of stuff here just to get the navigation bar in order */
+
+/* Navbar lineheight */
+.navbar-nav>li>a {
+	line-height: 1.42857143;
+	padding-top: 10px !important;
+	padding-bottom: 10px !important;
+}
+
+.navbar-inverse {
+  background-color: #221f20;
+  border-color: none;
+  padding: 0px;
+}
+
+.navbar-right {
+  font-family: "Lato",helvetica,arial,sans-serif;
+  position: absolute;
+  display: block;
+  font-size: 1.2em;
+  color: white;
+}
+
+/* Calculator Title */
+.navbar-brand {
+  font-size:16px;
+  padding-top: 13px;
+}
+
+/* End all the stuff for the global nav */

@@ -1,0 +1,800 @@
+---
+title: "| The Magic of Randomization"
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: scroll
+    css: styles.css
+    logo: logo-sm.png
+    favicon: favicon.png
+runtime: shiny
+---
+
+
+<script>
+$('.navbar-logo').wrap('<a href="https://www.searchdiscovery.com/how-we-help/services/optimization/" target=_blank>');
+</script>
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shinyWidgets)  # Tweak some of the controls
+library(tidyverse)
+library(gt)            # Nicer table
+library(htmltools)     # Nicer table formatting
+library(scales)        # Formatting some percentages
+library(randomcoloR)
+library(randomizr)    # So we can do complete random assignment easily
+library(patchwork)     # Arrange some plots side by side
+
+set.seed(61705)
+
+# Set the light gray color that matches the theme. It's set as a background in lots
+# of places to make the layout blend with the background
+bg_color <- "#F2F2F2"
+
+# Define the main theme used in plots.
+theme_main <- theme_void() +
+  theme(plot.title.position = "plot",
+        plot.title = element_text(hjust = 0.5, size = 18, family = "Lato", color = "#7A7574", face = "bold"),
+        panel.background = element_rect(fill = bg_color, color = NA),
+        plot.background = element_rect(fill = bg_color, color = NA))
+
+```
+
+Overview
+======================================================================
+
+This simulator is intended to be a tool to help students (within academia or not; we're all students of life and seeking knowledge, right?) strengthen their intuition with regards to randomization in the context of randomized controlled trials (aka, field experiments).
+
+#### The Basic World of this Simulator
+
+This simulator constructs a simplified world with the following characteristics:
+
+* A finite set of experimental subjects (you control how many)
+* A "treatment" for which we want to detect the impact (you get to be omnipotent and specify the effect of the treatment as a percentage)
+* A single covariate--represented by "color" (you control the number of levels)
+
+#### Using the Simulator
+
+The simulator is intended to simply follow the three steps at the top of this page:
+
+1. [Create the Data Set](#create-the-data-set)&#8212;this is your opportunity to be omnipotent. You get to choose the data set size, the underlying treatment effect (pretend the actual treatment is whatever strikes your fancy!), the number of colors (the number of levels of the "heterogenius covariate"), and the extent to which color (as a covariate) is actually a predictor of the outcome that the treatment is looking to impact.
+
+2. [Run a Single Simulation](#simulate-an-experiment)&#8212;run a single simulation that splits the population (randomly!) into treatment and control groups. You can then actually _see_ what each group looks like, as well as "blend" the covariate (the colors) to see how they actually pretty much even out. But, also, you can start to explore block randomization: the smaller the data set you created, the more you will see differences in the averaged color... _unless_ you randomize _within each color_. This is still randomizing, but it's a simplified example of _block_ randomization. This view also shows the observed effect for the simulation, so, if you run it multiple times, you can start to see how close the "experiment" approximates the true effect.
+
+3. [Simulate Multiple Experiments](#simulate-multiple-experiments)&#8212;this is an extension of the previous step and focuses on the observed effects by simulating the experiment multiple times and showing how those results are distributed (the "sampling distribution"). This runs the simulations both _with_ block randomization and _without_ block randomization. The beauty of blocking: it will never _increase_ the sampling variability, but, if the covariate(s) being used for blocking are at all predictive of the outcome, it can _decrease_ the sampling variability, which means, in a _single_ experiment, blocking can tighten the range of your estimation of the effect of the treatment.
+
+#### Accessing the Code / Providing Feedback
+
+This simulator was developing using the R programming language (specifically, flexdashboards using Shiny). The code is available under an MIT License at https://github.com/SDITools/randomization-explorer. Feedback, bugs, and enhancement requests can be logged there as issues.
+
+1. Create the Data Set
+======================================================================
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+###
+<div style="font-size: 0.9em; font-style: italic;">Configure the parameters for the date set that will be used for the simulations.</div>
+<hr>
+
+```{r data-size}
+# Basically, set a value that will be the number of rows and 1/2 of the # of columns
+sliderTextInput("data_size", label = "Size of the Data Set:", 
+                grid = FALSE, force_edges = TRUE,
+                choices = c("Small", seq(6,39) %>% as.character, "Large"),
+                selected = "20")
+
+sliderInput("num_colors", label = "Number of Unique Colors:",
+            ticks = FALSE, min = 3, max = 8, value = 6, step = 1)
+
+# Set the effect size. Be omnipotent!
+sliderTextInput("effect_size", label = "Treatment Effect*:", 
+                grid = FALSE, force_edges = TRUE,
+                choices = c("0%", "1%", "5%", "10%", "15%", "20%", "25%", "30%"),
+                selected = "15%")
+```
+
+<div style="font-size: 0.7em; font-style: italic; padding-bottom: 10px; padding-left: 10px; text-indent: -10px;">\* You're omnipotent! (You wouldn't know this in reality.)</div>
+
+```{r color-predictiveness}
+
+# Set how predictive "color" is of the outcome
+sliderTextInput("color_predictiveness", label = "Outcome Predictiveness of Color:", 
+                grid = FALSE, force_edges = TRUE,
+                choices = c("None", "Weakly Predictive", "Strongly Predictive"),
+                selected = "Weakly Predictive"
+)
+```
+
+<div style = "text-align: center;">
+```{r build_data_button}
+# This is to build the base, all-knowing data frame. Simulations will then
+# split this data set into treatment and control and try it out.
+actionButton("build_data", "Create the Data Set")
+```
+</div>
+
+```{r build_data}
+# Get the data size. This translates what is a text input into a numeric
+get_data_size <- eventReactive(input$build_data, {
+  data_size <- case_when(
+    input$data_size == "Small" ~ 5,
+    input$data_size == "Large" ~ 40,
+    TRUE ~ as.numeric(input$data_size)
+  )
+})
+
+# Get the num_rows and num_cols
+get_num_rows <- reactive({get_data_size()})
+get_num_cols <- reactive({get_data_size() * 2})
+
+# Calculate the total observations
+get_total_obs <- reactive({get_num_rows() * get_num_cols()})
+
+# Create a data frame with random colors and potential outcomes. This is one
+# observation per row, but we'll ultimately  plot on a grid, just for 
+# compactness's sake
+get_data <- eventReactive(input$build_data, {
+  
+  # Get a data frame with the colors. This has the unique number of colors
+  # based on user input, but then those colors are repeated at varying 
+  # frequencies so that they are not all just evenly distributed
+  colors_df <- tibble(colors = randomColor(input$num_colors,
+                                           hue = "random",
+                                           luminosity = "bright"),
+                      weight = sample(1:10, input$num_colors, replace = TRUE))
+  
+  expand_colors <- function(color, rep_ct){
+    tibble(color = rep(color, rep_ct))
+  }
+  colors_exp_df <- map2_dfr(colors_df$colors, colors_df$weight, expand_colors)
+  
+  # Get the total observations (count)
+  total_obs <- get_total_obs()
+  
+  # Build the main data frame
+  df <- tibble(idx = seq(1,total_obs),
+               color_row = sample(1:nrow(colors_exp_df), 
+                                  total_obs, replace = TRUE)) %>% 
+    # Set a color
+    mutate(color = colors_exp_df$color[color_row]) %>% 
+    # Split out the R, G, and B values
+    mutate(red = substr(color, 2, 3) %>% strtoi(base = 16),
+           green = substr(color, 4, 5) %>% strtoi(base = 16),
+           blue = substr(color, 6, 7) %>% strtoi(base = 16))
+  # Set x and y values
+  df$x_pos <- rep(1:get_num_cols(), length.out = nrow(df))
+  df$y_pos <- rep(1:get_num_rows(), each=get_num_cols())
+  
+  # Set the potential outcomes. Y_0 is the potential outcome with no treatment
+  # and Y_1 is the potential outcome with treatment. These will be set up
+  # in the initial data set based on the selected effect size and the predictive
+  # level of color.
+  
+  # The "base" for Y_0 is simply 1,000 (this could be an input, too...but why?)
+  base_Y0 <- 1000
+  
+  # Turn the selected effect size into something that can be multiplied by
+  # the base to set the base for the treatment
+  effect_scale <- gsub("%", "", input$effect_size) %>% as.numeric()/100 + 1
+  base_Y1 <- base_Y0 * effect_scale
+  
+  # Set a multiplier that will vary the levels by color. This will randomly assign
+  # a multiplier for each color, and then that multiplier will be applied to both
+  # base_Y0 and base_Y1
+  color_multipliers <- df %>% 
+    group_by(color) %>% summarise() %>% ungroup()
+  
+   color_multipliers$color_multiplier <- case_when(
+    input$color_predictiveness == "Strongly Predictive" ~ 
+      rnorm(nrow(color_multipliers), mean = 1, sd = 0.1),
+    input$color_predictiveness == "Weakly Predictive" ~ 
+      rnorm(nrow(color_multipliers), mean = 1, sd = 0.07),
+    TRUE ~ 1)
+  
+  # Add the multiplier in as a scaling factor to the base data
+  df <- df %>%
+    left_join(color_multipliers)
+  
+  # Create the potential outcomes (the untreated -- Y0 -- and treated -- Y1 --
+  # potential outcomes). This is taking the "base" for the treatment and the
+  # effect and then multiplying it by a value from a normal distribution
+  # with a mean of 1 and a stdev of 0.1
+  df$Y0 <- base_Y0 * rnorm(nrow(df), 1, 0.1)
+  df$Y1 <- base_Y1 * rnorm(nrow(df), 1, 0.1)
+
+  
+  # Now scale by the "color factor."
+  df <- df %>% 
+    mutate(Y0 = Y0 * color_multiplier,
+           Y1 = Y1 * color_multiplier)
+})
+
+get_assignments <- eventReactive(input$run_simulation, {
+  # Get the master data set
+  df <- get_data()
+  total_obs <- nrow(df)
+  
+  # Assign treatment (1) and control (0)
+  if(input$blocking == TRUE){
+    df$assignment <- block_ra(df$color, prob = 0.5)
+  } else {
+    df$assignment <- complete_ra(total_obs, prob = 0.5)
+  }
+  
+  # Populate the colors for the treatment and control groups
+  df <- df %>% 
+    mutate(color_control = if_else(assignment == 0, color, "gray90"),
+           color_treatment = if_else(assignment == 1, color, "gray90"))
+  
+  df
+})
+
+# Get a data frame for just the treatment observations
+get_treatment <- reactive({
+  df <- get_assignments() %>% filter(assignment == 1) 
+  # Set x and y values
+  df$x_pos <- rep(1:(get_num_cols()/2), length.out = nrow(df))
+  # Might not be a perfect split, so go a little long and then clip it
+  df$y_pos <- rep(1:(get_num_rows()+2), each=get_num_cols()/2)[1:nrow(df)]
+  df
+})
+
+# Get a data frame for just the control observations
+get_control <- reactive({
+  df <- get_assignments() %>% filter(assignment == 0) 
+  # Set x and y values
+  df$x_pos <- rep(1:(get_num_cols()/2), length.out = nrow(df))
+  # Might not be a perfect split, so go a little long and then clip it
+  df$y_pos <- rep(1:(get_num_rows()+2), each=get_num_cols()/2)[1:nrow(df)]
+  df
+})
+```
+
+Row
+-----------------------------------------------------------
+
+**The data set you generated.** The treatment effect isn't _exactly_ what you specified, but that's random data generation for ya`.
+
+<div style = "text-align: center;">
+```{r overall_dataset}
+
+# Plot a grid of the colors
+output$plot_all <- renderPlot({
+  
+  total_obs <- get_total_obs()
+  df_master <- get_data()
+  effect <- (sum(df_master$Y1) - sum(df_master$Y0)) / sum(df_master$Y0) 
+  
+  ggplot(df_master, aes(x = x_pos, y = y_pos, fill = color)) + 
+    geom_tile(color = "white", size = 1) +
+    labs(title = paste(format(total_obs, big.mark = ","), "Observations / Treatment Effect:", 
+                       percent(effect, accuracy = 0.1))) +
+    scale_fill_identity() +
+    theme_main
+},
+height = 400, width = 800)
+
+plotOutput("plot_all")
+```
+</div>
+
+Below are the first few subjects from the data set (starting from the bottom left above). Y<sub>0</sub> and Y<sub>1</sub> are the _potential outcomes_ (we're in a world where we know exactly what outcome we would see whether each subject received or did not receive treatment).
+
+```{r data-table}
+# Show the underlying data table
+output$data_master <- render_gt({
+  df_master <- get_data() 
+  
+  # Function to take the hex values for a color and return it as a gt HTML value.
+  # This can't be done right in the the mutate call, so setting as a function that
+  # returns the HTML-ified value.
+  add_cell_color <- function(col) {
+    
+    cell_color = paste0("display: inline-block; padding: 2px 12px; ",
+                        "border-radius: 15px; font-weight: 600; font-size: 12px; ",
+                        "background: ", col, "; color: white;") %>% 
+      htmltools::div(style = ., col) %>% as.character() %>% gt::html()
+  }
+  
+  df_master <- df_master %>% 
+    head(50) %>% 
+    mutate(effect = percent((Y1 - Y0)/Y0, accuracy = 0.1),
+           Y0 = round(Y0, 0) %>% format(big.mark = ","),
+           Y1 = round(Y1, 0) %>% format(big.mark = ",")) %>% 
+    # Add a text string with the HTML to color the cells
+    mutate(color = purrr::map(color, add_cell_color)) %>% 
+    select(idx, color, Y0, Y1, effect) 
+  
+  names(df_master) <- c("Index","Color", "Y0", "Y1", "Effect")
+  
+  df_master %>% gt() %>% 
+    tab_spanner(
+      label = "Potential Outcomes",
+      columns = c(Y0, Y1)
+    ) %>% 
+    tab_style(style = list(cell_fill(color = bg_color)),
+              locations = list(cells_body(), cells_column_spanners(),
+                               cells_column_labels())) %>% 
+    cols_label(Y0 = gt::html("Y<sub>0</sub> (Not Treated)"), 
+               Y1 = gt::html("Y<sub>1</sub> (Treated)")) %>% 
+    tab_options(data_row.padding = px(2)) %>%
+    cols_width(Index ~ px(50),
+               Color ~ px(100),
+               starts_with("Y") ~px(150),
+               Effect ~ px(100)) %>%
+    cols_align(align = "right",
+               columns = everything()) %>% 
+    cols_align(align = "center",
+               columns = c(Index, Color))
+})
+
+gt_output("data_master")
+
+```
+
+2. Simulate an Experiment
+======================================================================
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+Choose whether or not to block on color and run the simulation:
+
+```{r design options}
+materialSwitch(inputId = "blocking", label = "Block on Color", value = FALSE,
+               status = "success", right = FALSE)
+```
+
+<div style = "text-align: center;">
+```{r addl_settings}
+actionButton("run_simulation", "Run Simulation")
+```
+</div>
+<hr>
+
+Data Set Settings:
+
+```{r}
+
+# Show Data Set Size
+output$data_size <- renderText({
+  ttl_obs <- get_total_obs()
+  msg <- paste("Total observations:", format(ttl_obs, big.mark = ","))
+})
+
+textOutput("data_size")
+
+# Show # of colors
+output$unique_colors <- renderText({
+  msg <- paste("Unique Colors:", input$num_colors)
+})
+
+textOutput("unique_colors")
+
+```
+
+<hr>
+
+Observed vs. True Effect:
+
+```{r get_true, results = 'as.is'}
+
+# Output the true effect
+output$true_effect <- renderText({
+  df <- get_data()
+  effect <- (sum(df$Y1) - sum(df$Y0)) / sum(df$Y0) 
+  msg <- percent(effect, accuracy = 0.1)
+})
+```
+
+The true effect is: **`r textOutput("true_effect", inline = TRUE)`**
+
+```{r get_observed}
+
+output$observed_effect <- renderText({
+  df <- get_assignments()
+  total_obs <- nrow(df)
+  
+  if(input$blocking == TRUE){
+    obs_effect <- df %>%
+      # Zero out the "unobserved"
+      mutate(Y0 = ifelse(assignment == 0, Y0, NA),
+             Y1 = ifelse(assignment == 1, Y1, NA)) %>%
+      group_by(color) %>%
+      # Observed control and treatment effects, as well as the total observations
+      # for each color, which we'll use for weighting
+      summarize(Y0 = mean(Y0, na.rm = TRUE), Y1 = mean(Y1, na.rm = TRUE),
+                num_obs = n()) %>%
+      ungroup() %>%
+      # Calculate the ATE for each color and then weight it
+      mutate(ate = (Y1 - Y0) / Y0 * num_obs/total_obs) %>%
+      pull(ate) %>% sum()
+  } else {
+    # Summarize: the % change between the mean for Y0 and the mean for Y1
+    obs_effect <- df %>% 
+      # NA out the "unobserved"
+      mutate(Y0 = ifelse(assignment == 0, Y0, NA),
+             Y1 = ifelse(assignment == 1, Y1, NA)) %>% 
+      # Observed control and treatment effects
+      summarize(Y0 = mean(Y0, na.rm = TRUE), Y1 = mean(Y1, na.rm = TRUE)) %>% 
+      # Calculate the ATE
+      mutate(ate = (Y1 - Y0) / Y0) %>% 
+      pull(ate)
+  }
+    msg <- percent(obs_effect, accuracy = 0.1)
+})
+```
+
+The observed effect is: **`r textOutput("observed_effect", inline = TRUE)`**
+
+Column
+-----------------------------------------------------------------------
+
+We've performed _random assignment_ to split the data into the two groups below. There are countless characteristics in an RCT that differ across subjects that may or may not be observable. Randomization helps ensure that these differences "come out in the wash." 
+
+```{r}
+
+output$plot_comparison <- renderPlot({
+  
+  df_control <- get_control()
+  df_treatment <- get_treatment()
+  
+  ############
+  # Make tiled plots. We'll then put them next to each other i na bit.
+  ############
+  
+  gg_treatment <- ggplot(df_treatment, aes(x = x_pos, y = y_pos, fill = color)) + 
+    geom_tile(color = "white", size = 1) +
+    labs(title = "Treatment Group") +
+    scale_fill_identity() +
+    theme_main
+  
+  gg_control <- ggplot(df_control, aes(x = x_pos, y = y_pos, fill = color)) + 
+    geom_tile(color = "white", size = 1) +
+    labs(title = "Control Group") +
+    scale_fill_identity() +
+    theme_main
+  
+  ############
+  # Plot the "Mean Color" for each
+  ############
+  
+  # Calculate the mean color for treatment and control and then make a plot
+  # that shows them. The is sneaky: the plots plots...nothing. But, they then
+  # then makes the background color the mean color in the theme
+  mean_control <- rgb(mean(df_control$red),
+                      mean(df_control$green),
+                      mean(df_control$blue),
+                      maxColorValue = 255)
+  
+  gg_control_mean <- ggplot() +
+    labs(title = paste("Mean Control Color:", mean_control)) +
+    theme_main +
+    theme(plot.title = element_text(margin = margin(0.25,0,0.25,0, "cm")),
+          plot.background = element_rect(fill = bg_color, color = NA),
+          panel.background = element_rect(fill = mean_control, color = NA),
+          panel.border = element_rect(fill = NA, colour = "white", size = 10))
+  
+  mean_treatment <- rgb(mean(df_treatment$red),
+                        mean(df_treatment$green),
+                        mean(df_treatment$blue),
+                        maxColorValue = 255)
+  
+  gg_treatment_mean <- ggplot() +
+    labs(title = paste("Mean Treatment Color:", mean_treatment)) +
+    theme_main +
+    theme(plot.title = element_text(margin = margin(0.25,0,0.25,0, "cm")),
+          plot.background = element_rect(fill = bg_color, color = NA),
+          panel.background = element_rect(fill = mean_treatment, color = NA),
+          panel.border = element_rect(fill = NA, colour = "white", size = 10))
+  
+  ############
+  # Make bar charts showing the color breakout
+  ############
+  
+  # Get the max value so common limits can be set for the bar charts
+  max_val <- get_assignments() %>% 
+    group_by(color, assignment) %>% summarise(obs = n()) %>% 
+    pull(obs) %>% max()
+  
+  # Get the colors by total occurrences to use for factors / ordering
+  color_levels <- get_assignments() %>% 
+    group_by(color) %>% summarise(obs = n()) %>% 
+    arrange(obs) %>% pull(color)
+  
+  # Control
+  df_control_summary <- df_control %>% 
+    group_by(color) %>% summarise(obs = n()) %>% arrange(obs) 
+  df_control_summary$color <- factor(df_control_summary$color, levels = color_levels)
+  
+  gg_control_bar <- ggplot(df_control_summary, aes(x = color, y = obs, fill = color, 
+                                                   label = format(obs, big.mark = ",", trim = TRUE))) +
+    geom_bar(stat = "identity") +
+    geom_text(hjust = 0, nudge_y = max_val/50, family = "Lato") +
+    scale_y_continuous(limits = c(0, max_val * 1.1)) +
+    scale_fill_identity() +
+    coord_flip() +
+    labs(title = "Control: Color Breakdown") +
+    theme_void() +
+    theme(plot.title.position = "plot",
+          plot.title = element_text(hjust = 0.5, family = "Lato", color = "#7A7574", size = 16,
+                                    face = "bold", margin = margin(0.25,0,0.25,0, "cm")),
+          legend.position = "none")
+  
+  # Treatment
+  df_treatment_summary <- df_treatment %>% 
+    group_by(color) %>% summarise(obs = n()) %>% arrange(obs) 
+  df_treatment_summary$color <- factor(df_treatment_summary$color, levels = color_levels)
+  
+  gg_treatment_bar <- ggplot(df_treatment_summary, aes(x = color, y = obs, fill = color, 
+                                                       label = format(obs, big.mark = ",", trim = TRUE))) +
+    geom_bar(stat = "identity") +
+    geom_text(hjust = 0, nudge_y = max_val/50, family = "Lato") +
+    scale_y_continuous(limits = c(0, max_val * 1.1)) +
+    scale_fill_identity() +
+    coord_flip() +
+    labs(title = "Treatment: Color Breakdown") +
+    theme_void() +
+    theme(plot.title.position = "plot",
+          plot.title = element_text(hjust = 0.5, family = "Lato", color = "#7A7574", size = 16,
+                                    face = "bold", margin = margin(0.25,0,0.25,0, "cm")),
+          legend.position = "none")
+  
+  # Output
+  (gg_control | gg_treatment) / 
+    (gg_control_mean | gg_treatment_mean) / 
+    (gg_control_bar | gg_treatment_bar) +
+    plot_layout(heights = c(3, 1, 2)) +
+    plot_annotation(theme = theme(panel.background = element_rect(fill = bg_color, color = NA),
+                                  plot.background = element_rect(fill = bg_color, color = NA)))
+  
+  
+}, height = 800, width = 800)
+
+plotOutput("plot_comparison")
+
+```
+
+3. Simulate Multiple Experiments
+======================================================================
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+###
+<div style="font-size: 0.9em; font-style: italic;">Randomly assign treatment and control multiple times.</div>
+<hr>
+
+```{r sim_num}
+sliderInput("num_sims", label = "Number of Simulations:",
+            ticks = FALSE, min = 100, max = 1000, value = 500, step = 100)
+```
+
+<div style="font-size: 0.9em; font-style: italic;">Run simulations with and then without blocking.</div>
+
+###
+<div style = "text-align: center;">
+```{r multi_sim_action}
+actionButton("run_many_sims", "Run Simulations")
+```
+</div>
+<hr>
+
+```{r multi_sim_settings}
+
+# Output the true effect
+output$true_effect_2 <- renderText({
+  df <- get_data()
+  effect <- (sum(df$Y1) - sum(df$Y0)) / sum(df$Y0) 
+  msg <- percent(effect, accuracy = 0.1)
+})
+
+# Show Data Set Size
+output$data_size_2 <- renderText({
+  ttl_obs <- get_total_obs()
+  msg <- format(ttl_obs, big.mark = ",")
+})
+
+# Show # of colors
+output$unique_colors_2 <- renderText({
+  msg <- input$num_colors
+})
+
+# Predictiveness of Color
+# Show # of colors
+output$predictiveness <- renderText({
+  msg <- input$color_predictiveness
+})
+
+```
+
+True Effect: **`r textOutput("true_effect_2", inline = TRUE)`**
+
+Total Observations: **`r textOutput("data_size_2", inline = TRUE)`**
+
+Unique Colors: **`r textOutput("unique_colors_2", inline = TRUE)`**
+
+Predictiveness of Color:<br>**`r textOutput("predictiveness", inline = TRUE)`**
+
+
+Column
+-------------------------------------------------
+
+```{r get_simulation}
+
+get_simulation <- eventReactive(input$run_many_sims, {
+  
+  # Get the master data set
+  df <- get_data()
+  total_obs <- nrow(df)
+  
+  # Create data frames with rows for the simulations
+  sim_df_blocked <- tibble(index = seq(1,input$num_sims))
+  sim_df_not_blocked <- sim_df_blocked
+  
+  # Function to split into treatment and control and then get an observed effect.
+  # This will get run multiple times so that a sampling distribution can be constructed.
+  # This takes as a second input whether the simulation should use blocking or not.
+  get_observed_effect <- function(idx, blocked = TRUE){
+    
+    # Assign treatment (1) and control (0). If using blocking, then do block
+    # randomization; otherwise, do complete randomization.
+    if(blocked == TRUE){
+      df$assignment <- block_ra(df$color, prob = 0.5)
+      
+      # Summarize
+      obs_effect <- df %>% 
+        # Zero out the "unobserved"
+        mutate(Y0 = ifelse(assignment == 0, Y0, NA),
+               Y1 = ifelse(assignment == 1, Y1, NA)) %>% 
+        group_by(color) %>% 
+        # Observed control and treatment effects, as well as the total observations
+        # for each color, which we'll use for weighting
+        summarize(Y0 = mean(Y0, na.rm = TRUE), Y1 = mean(Y1, na.rm = TRUE),
+                  num_obs = n()) %>% 
+        ungroup() %>% 
+        # Calculate the ATE for each color and then weight it
+        mutate(ate = (Y1 - Y0) / Y0 * num_obs/total_obs) %>% 
+        pull(ate) %>% sum()
+      
+    } else {
+      
+      # The "not blocked" approach...complete random assignment without accounting
+      # for color
+      df$assignment <- complete_ra(total_obs, prob = 0.5)
+      
+      # Summarize: the % change between the mean for Y0 and the mean for Y1
+      obs_effect <- df %>% 
+        # NA out the "unobserved"
+        mutate(Y0 = ifelse(assignment == 0, Y0, NA),
+               Y1 = ifelse(assignment == 1, Y1, NA)) %>% 
+        # Observed control and treatment effects
+        summarize(Y0 = mean(Y0, na.rm = TRUE), Y1 = mean(Y1, na.rm = TRUE)) %>% 
+        # Calculate the ATE
+        mutate(ate = (Y1 - Y0) / Y0) %>% 
+        pull(ate)
+    }
+    
+    # Return as a data frame row, including TRUE or FALSE for whether blocking
+    # was employed.
+    df <- tibble(index = idx, obs_effect = obs_effect,
+                 blocked = blocked)
+  }
+  
+  # Run the simulations with blocked simulations and then not blocked simulations
+  sim_df_blocked <- map_dfr(sim_df_blocked$index, get_observed_effect, blocked = TRUE)
+  sim_df_not_blocked <- map_dfr(sim_df_not_blocked$index, get_observed_effect, blocked = FALSE)
+  
+  # Combine the DFs (there is a column flagging if they were blocked or not).
+  # This will get split back out later, but this function is going to return a
+  # single object, so could be a list with two tibbles or just one big tibble.
+  # Six of one...
+  sim_df <- sim_df_blocked %>% 
+    rbind(sim_df_not_blocked)
+  
+})
+
+# Build the plot of the simulations
+output$sampling_dist <- renderPlot({
+  simulation_df_master <- get_simulation()
+  
+  # Get the max and min values to be used in scale_x_continuous for both plots
+  x_min = min(simulation_df_master$obs_effect)
+  x_max = max(simulation_df_master$obs_effect)
+  
+  # Set the number of bins. We may fiddle with this a bit down the road.
+  num_bins <- 15
+  
+  # Calculate a "nudge" value for placing the mean and sd labels. 
+  x_nudge = (x_max - x_min) * 0.01
+  
+  # Split the data frame into the blocked vs. not blocked versions
+  sim_df_blocked <- simulation_df_master %>% filter(blocked == TRUE)
+  sim_df_not_blocked <- simulation_df_master %>% filter(blocked == FALSE)
+  
+  # Get the max y value for each of the plots. Do this by making a simple, 
+  # throwaway histogram and grabbing the max value. The max value *should*
+  # always come from the blocked simulation, but, just to be safe, calculate
+  # for both and calculate the max across the two. This will make the distributions
+  # be more visually comparable. This trick came from
+  # https://stackoverflow.com/questions/14584093/ggplot2-find-number-of-counts-in-histogram-maximum
+  y_max_blocked <- ggplot() + 
+    geom_histogram(data = sim_df_blocked, mapping = aes(obs_effect), bins = num_bins) +
+    scale_x_continuous(limits = c(x_min, x_max))
+  y_max_blocked <- ggplot_build(y_max_blocked)$data[[1]] %>% pull(count) %>% max()
+  
+  y_max_not_blocked <- ggplot() + 
+    geom_histogram(data = sim_df_not_blocked, mapping = aes(obs_effect), bins = num_bins) +
+    scale_x_continuous(limits = c(x_min, x_max))
+  y_max_not_blocked <- ggplot_build(y_max_not_blocked)$data[[1]] %>% pull(count) %>% max()
+  
+  y_max <- max(y_max_blocked, y_max_not_blocked) * 1.1
+  
+  # Function to build a plot. We're going to build two, but will use the same
+  # function to get both.
+  get_sim_plot <- function(simulation_df, title_label = "Blocked"){
+    
+    mean_obs <- mean(simulation_df$obs_effect)
+    sd_obs <- sd(simulation_df$obs_effect)
+    
+    gg <- ggplot() + 
+      geom_histogram(data = simulation_df, mapping = aes(obs_effect), 
+                     fill = "#009CAB", alpha = 0.5, bins = num_bins) +
+      # Plot the Mean
+      geom_vline(aes(xintercept = mean_obs)) +
+      geom_text(data = tibble(x = mean_obs, y = y_max * 0.8, 
+                              label = paste("Mean:", percent(mean_obs, accuracy = 0.1))),
+                mapping = aes(x = x, y = y, label = label),
+                hjust = 0, nudge_x = x_nudge, family = "Lato") +
+      # Plot + 2SD
+      geom_vline(aes(xintercept = mean_obs + 2 * sd_obs), linetype = "dashed") +
+      geom_text(data = tibble(x = mean_obs + 2 * sd_obs, y = y_max * 0.7, 
+                              label = paste("+2 SD:", percent(mean_obs + 2 * sd_obs, accuracy = 0.1))),
+                mapping = aes(x = x, y = y, label = label),
+                hjust = 0, nudge_x = x_nudge, family = "Lato") +
+      # Plot - 2SD
+      geom_vline(aes(xintercept = mean_obs - 2 * sd_obs), linetype = "dashed") +
+      geom_text(data = tibble(x = mean_obs - 2 * sd_obs, y = y_max * 0.7, 
+                              label = paste("-2 SD:", percent(mean_obs - 2 * sd_obs, accuracy = 0.1))),
+                mapping = aes(x = x, y = y, label = label),
+                hjust = 1, nudge_x = -1 * x_nudge, family = "Lato") +
+      labs(title = title_label,
+           subtitle = paste("Sampling Distribution of the Observed Effect:",
+                            format(input$num_sims, big.mark = ","), "Simulations"),
+           x = "Observed Effect",
+           y = "# of Simulations") +
+      scale_y_continuous(expand = c(0,0), limits = c(0, y_max)) +
+      scale_x_continuous(limits = c(x_min, x_max), labels = label_percent(accuracy = 0.1)) +
+      theme_void() +
+      theme(text = element_text(family = "Lato"),
+            plot.title.position = "plot",
+            plot.title = element_text(size = 16, face = "bold", 
+                                      color = "#221F20", margin = margin(18, 0, 0, 0, "pt")),
+            plot.subtitle = element_text(size = 12, face = "italic", color = "#7A7574", 
+                                         margin = margin(6, 0, 16, 0, "pt")),
+            panel.background = element_rect(fill = bg_color, color = NA),
+            plot.background = element_rect(fill = bg_color, color = NA),
+            axis.text.y = element_text(color = "#7A7574", margin = margin(0, 6, 0, 0, "pt")),
+            axis.text.x = element_text(color = "#7A7574", margin = margin(8, 0, 8, 0, "pt")),
+            axis.title.x = element_text(color = "#3F433D", face = "bold"),
+            axis.title.y = element_text(color = "#3F433D", face = "bold", angle = 90,
+                                        margin = margin(0, 8, 0, 0, "pt")),
+            axis.line.x = element_line(color = "#3F433D"),
+            panel.grid.major.y = element_line(color = "gray80"))
+    
+    gg
+  }
+  
+  gg_blocked <- get_sim_plot(sim_df_blocked, "Results with Blocking")
+  gg_not_blocked <- get_sim_plot(sim_df_not_blocked, "Results without Blocking")
+  
+  gg_blocked / gg_not_blocked +
+    plot_annotation(theme = theme(panel.background = element_rect(fill = bg_color, color = NA),
+                                  plot.background = element_rect(fill = bg_color, color = NA)))
+},
+height = 600, width = 800)
+
+plotOutput("sampling_dist")
+
+```
