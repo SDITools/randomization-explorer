@@ -474,7 +474,7 @@ output$plot_comparison <- renderPlot({
     theme(plot.title = element_text(margin = margin(0.25,0,0.25,0, "cm")),
           plot.background = element_rect(fill = bg_color, color = NA),
           panel.background = element_rect(fill = mean_control, color = NA),
-          panel.border = element_rect(fill = NA, colour = "white", size = 10))
+          panel.border = element_rect(fill = NA, colour = bg_color, size = 10))
   
   mean_treatment <- rgb(mean(df_treatment$red),
                         mean(df_treatment$green),
@@ -487,7 +487,7 @@ output$plot_comparison <- renderPlot({
     theme(plot.title = element_text(margin = margin(0.25,0,0.25,0, "cm")),
           plot.background = element_rect(fill = bg_color, color = NA),
           panel.background = element_rect(fill = mean_treatment, color = NA),
-          panel.border = element_rect(fill = NA, colour = "white", size = 10))
+          panel.border = element_rect(fill = NA, colour = bg_color, size = 10))
   
   ############
   # Make bar charts showing the color breakout

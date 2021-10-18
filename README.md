@@ -1,5 +1,7 @@
 This simulator is intended to be a tool to help students (within academia or not; we're all students of life and seeking knowledge, right?) strengthen their intuition with regards to randomization in the context of randomized controlled trials (aka, field experiments).
 
+The Shiny app can be explored at https://sdidev.shinyapps.io/randomization_explorer/.
+
 #### The Basic World of this Simulator
 
 This simulator constructs a simplified world with the following characteristics:
