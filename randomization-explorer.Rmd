@@ -17,6 +17,7 @@ $('.navbar-logo').wrap('<a href="https://www.searchdiscovery.com/how-we-help/ser
 ```{r setup, include=FALSE}
 library(flexdashboard)
 library(shinyWidgets)  # Tweak some of the controls
+library(shinybusy)     # Show the "busy" modal when running simulations
 library(tidyverse)
 library(gt)            # Nicer table
 library(htmltools)     # Nicer table formatting
@@ -67,7 +68,7 @@ The simulator is intended to simply follow the three steps at the top of this pa
 
 This simulator was developing using the R programming language (specifically, flexdashboards using Shiny). The code is available under an MIT License at https://github.com/SDITools/randomization-explorer. Feedback, bugs, and enhancement requests can be logged there as issues.
 
-1. Create the Data Set
+1. Create the Data Set &#8594;
 ======================================================================
 
 Inputs {.sidebar}
@@ -333,7 +334,7 @@ gt_output("data_master")
 
 ```
 
-2. Simulate an Experiment
+2. Simulate an Experiment &#8594;
 ======================================================================
 
 Inputs {.sidebar}
@@ -625,6 +626,8 @@ Column
 
 get_simulation <- eventReactive(input$run_many_sims, {
   
+  show_modal_spinner(color = "#009CAB", text = "SIMULATING...") # show the "busy" modal window
+
   # Get the master data set
   df <- get_data()
   total_obs <- nrow(df)
@@ -686,7 +689,9 @@ get_simulation <- eventReactive(input$run_many_sims, {
   sim_df_blocked <- map_dfr(sim_df_blocked$index, get_observed_effect, blocked = TRUE)
   sim_df_not_blocked <- map_dfr(sim_df_not_blocked$index, get_observed_effect, blocked = FALSE)
   
-  # Combine the DFs (there is a column flagging if they were blocked or not).
+  remove_modal_spinner() # remove "busy" modal
+
+    # Combine the DFs (there is a column flagging if they were blocked or not).
   # This will get split back out later, but this function is going to return a
   # single object, so could be a list with two tibbles or just one big tibble.
   # Six of one...
@@ -697,6 +702,7 @@ get_simulation <- eventReactive(input$run_many_sims, {
 
 # Build the plot of the simulations
 output$sampling_dist <- renderPlot({
+  
   simulation_df_master <- get_simulation()
   
   # Get the max and min values to be used in scale_x_continuous for both plots
